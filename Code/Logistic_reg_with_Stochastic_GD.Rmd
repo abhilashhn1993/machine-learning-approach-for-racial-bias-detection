@@ -1,0 +1,616 @@
+---
+title: "IDS 575 Project"
+author: "Ipseeta Deka"
+date: "11/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#install.packages("psych")
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(psych)
+library(caret)
+sqf <- read_csv('sqf-all.csv')
+```
+
+## Data description and structure
+
+```{r cars}
+summary(sqf)
+
+cols <- c("pct","recstat", "inout", "trhsloc", "crimsusp", "typeofid", "explnstp", "othpers", "arstmade", "arstoffn", "sumissue", "sumoffen", "offunif", "frisked", "searched", "contrabn", "adtlrept", "pistol", "riflshot", "knifcuti", "machgun", "othrweap", "pf_hands", "pf_wall", "pf_grnd", "pf_drwep", "pf_ptwep", "pf_baton", "pf_hcuff", "pf_pepsp", "pf_other", "radio", "ac_rept", "ac_inves", "rf_vcrim", "rf_othsw", "ac_proxm", "rf_attir", "cs_objcs", "cs_descr", "cs_casng", "cs_lkout", "rf_vcact", "cs_cloth", "cs_drgtr", "ac_evasv", "ac_assoc", "cs_furtv", "rf_rfcmp", "ac_cgdir", "rf_verbl", "cs_vcrim", "cs_bulge", "cs_other", "ac_incid", "ac_time", "rf_knowl", "ac_stsnd", "ac_other", "sb_hdobj", "sb_outln", "sb_admis", "sb_other", "rf_furt", "rf_bulg", "offverb", "offshld", "forceuse", "sex", "race", "haircolr", "eyecolor", "build", "othfeatr")
+
+sqf[cols] <- lapply(sqf[cols], as.factor)
+sqf$detailCM < as.factor(sqf$detailCM)
+summary(sqf$detailCM)
+
+```
+
+
+## Exploratory data analysis
+
+```{r}
+sqf_sex <- sqf %>% filter(sex %in% c("F","M"))   
+sqf_race <- subset(sqf, !is.na(race))
+sqf_race <- sqf %>% filter(race %in% c("A","B","I","P","Q","W"))
+sqf_build <- sqf %>% filter(build %in% c("H","M","T","U"))    
+
+sqf_sex %>% group_by(arstmade, sex) %>% tally()
+prop.table(table(sqf_sex$arstmade, sqf_sex$sex))*100
+
+
+#Proportion of default with respect to loan sub-grade
+sqf_race %>% group_by(arstmade, race) %>% tally()
+prop.table(table(sqf_race$arstmade, sqf_race$race))*100
+
+#Graph of Default variation with grade
+ggplot(data=subset(sqf_race, !is.na(race)),aes(x = race, fill = arstmade))+geom_bar()+ggtitle("Variation of arrests with race")+theme(plot.title = element_text(hjust = 0.5)) + scale_x_discrete(breaks=c("A","B","I","P","Q","W"), labels=c("Asian/Pacific Islander","Black", "American Indian/Aalaskan Native","Black-Hispanic","White-Hispanic","White"))+ theme(axis.text.x = element_text(angle = 45,hjust = 0.2,vjust = 0.5))+coord_flip() + scale_fill_manual(values=c("#E69F00", "#56B4E9"), name="Arrested?", labels=c("No","Yes"))
+
+ggplot(sqf_sex,aes(x = sex, fill=arstmade))+geom_bar()+ggtitle("Variation of arrests with sex")+theme(plot.title = element_text(hjust = 0.5)) + scale_x_discrete(breaks=c("F","M"), labels=c("Female","Male"))+ theme(axis.text.x = element_text(hjust = 0.2,vjust = 0.5))+ scale_fill_manual(values=c("#E69F00", "#56B4E9"), name="Arrested?", labels=c("No","Yes"))
+
+
+ggplot(sqf_build,aes(x = build, fill = arstmade))+geom_bar()+ggtitle("Variation of arrests with build")+theme(plot.title = element_text(hjust = 0.5)) + scale_x_discrete(breaks=c("H","M","T","U"), labels=c("Heavy","Medium","Thin","Muscular"))+ theme(axis.text.x = element_text(hjust = 0.2,vjust = 0.5))+ scale_fill_manual(values=c("#E69F00", "#56B4E9"), name="Arrested?", labels=c("No","Yes"))   
+                                                                                                                
+```
+
+```{r}
+nm<-names(sqf)[colMeans(is.na(sqf))>0.6]
+nm
+```
+
+```{r}
+ 
+sqf<- sqf %>% replace_na(list(offverb = "N"))
+sqf<- sqf %>% replace_na(list(offshld = "N"))
+sqf<- sqf %>% replace_na(list(forceuse = "N"))
+
+sqf %>% group_by(offverb) %>% tally()
+sqf %>% group_by(offshld) %>% tally() 
+sqf %>% group_by(forceuse) %>% tally() 
+
+nm<-names(sqf)[colMeans(is.na(sqf))>0.6]
+nm
+
+sqf <- sqf %>% select(-nm)
+
+#Irrelevnt vaariables 
+sqf <- sqf %>% select(-c(eyecolor, haircolr,premname, addrnum, stname, stinter, crossst, addrtyp))
+```
+
+## Feature selection and data clean up
+
+```{r}
+
+
+qplot(sqf$age, geom="histogram",binwidth = 5,  
+      main = "Histogram for Age", 
+      xlab = "Age",  
+      fill=I("blue"), 
+      col=I("red"), 
+      alpha=I(.2),
+      xlim=c(20,50)) 
+
+qplot(sqf$perobs, geom="histogram",binwidth = 5,  
+      main = "Histogram for period of observation", 
+      xlab = "Period",  
+      fill=I("blue"), 
+      col=I("red"), 
+      alpha=I(.2),
+      xlim=c(20,50)) 
+```
+
+```{r}
+#Reason for stop
+#cs_objcs	cs_descr	cs_casng	cs_lkout	cs_cloth	cs_drgtr	cs_furtv	cs_vcrim	cs_bulge	cs_other
+sqf <- sqf %>% mutate(cs = ifelse(cs_objcs == "Y", "carrying suspicious obj",ifelse(cs_descr == "Y", "fits a relevant desc",
+                                ifelse(cs_casng == "Y", "casing a victim or location",ifelse(cs_lkout == "Y", "acting as lookout",
+                                ifelse(cs_cloth == "Y", "wearing crime like attire",ifelse(cs_drgtr == "Y", "indicate drug transaction",
+                                ifelse(cs_furtv == "Y", "furtive movement",ifelse(cs_vcrim == "Y", "act to engage in violent crime",
+                                ifelse(cs_bulge == "Y", "suspicion bulge",ifelse(cs_other == "Y", "other","none")))))))))))
+sqf_cs <- filter(sqf, cs %in% c("carrying suspicious obj","fits a relevant desc","casing a victim or location","acting as lookout","wearing crime like attire","indicate drug transaction","furtive movement","act to engage in violent crime","suspicion bulge","other"))  
+
+ggplot(sqf_cs, aes(x = cs)) +  ggtitle("Reason for stop") + xlab("Reasons") + ylab("Percentage") +
+  geom_bar(aes(y = (..count..)/sum(..count..)*100, fill = factor(..x..), stat = "count")) + coord_flip()
+
+#Reason for frisk
+#rf_vcrim	rf_othsw	rf_attir	rf_vcact	rf_rfcmp	rf_verbl	rf_knowl	rf_furt	rf_bulg
+sqf <- sqf %>% mutate(rf = ifelse(rf_vcrim == "Y", "violent crime",ifelse(rf_othsw == "Y", "other suspicion",
+                                ifelse(rf_vcact == "Y", "act to engage in violent crime",ifelse(rf_rfcmp == "Y", "refuse to comply",
+                                ifelse(rf_verbl == "Y", "verbal threats by suspect",ifelse(rf_knowl == "Y", "knowledge of prior crime behav",
+                                ifelse(rf_furt == "Y", "furtive movements",ifelse(rf_bulg == "Y", "suspicion bulge",
+                                ifelse(rf_attir == "Y", "inappropriate attire","N"))))))))))
+
+sqf_rf <- filter(sqf, rf %in% c("violent crime","other suspicion","act to engage in violent crime","refuse to comply","verbal threats by suspect","knowledge of prior crime behav","furtive movements","suspicion bulge","inappropriate attire"))  
+
+ggplot(sqf_rf, aes(x = rf)) +  ggtitle("Reason for frisk") + xlab("Reasons") + ylab("Percentage")+
+  geom_bar(aes(y = (..count..)/sum(..count..)*100, fill = factor(..x..), stat = "count"))+ coord_flip()
+
+#Basis of search
+#sb_hdobj	sb_outln	sb_admis	sb_other
+sqf <- sqf %>% mutate(sb = ifelse(sb_hdobj == "Y", "hard object",ifelse(sb_outln == "Y", "outline of weapon",
+                                ifelse(sb_admis == "Y", "admission by suspect",ifelse(sb_other == "Y", "other","N")))))
+
+sqf_sb <- filter(sqf, sb %in% c("hard object","outline of weapon","admission by suspect","other"))  
+
+ggplot(sqf_sb, aes(x = sb)) +  ggtitle("Basis of search") + xlab("Basis") + ylab("Percentage") +
+  geom_bar(aes(y = (..count..)/sum(..count..)*100, fill = factor(..x..), stat = "count")) + 
+  geom_text(aes(label = scales::percent(..count..), y = (..count..), group = ACC), position = position_dodge(width = 0.9),vjust = 1.5)
+
+#Physical force used by officer
+#pf_hands	pf_wall	pf_grnd	pf_drwep	pf_ptwep	pf_baton	pf_hcuff	pf_pepsp	pf_othe
+sqf <- sqf %>% mutate(pf = ifelse(pf_hands == "Y", "hands",ifelse(pf_wall == "Y", "wall",
+                                ifelse(pf_grnd == "Y", "ground",ifelse(pf_drwep == "Y", "drwep",
+                                ifelse(pf_ptwep == "Y", "ptwep",ifelse(pf_baton == "Y", "baton",
+                                ifelse(pf_hcuff == "Y", "hcuff",ifelse(pf_pepsp == "Y", "pepsp",
+                                ifelse(pf_other == "Y", "other","none"))))))))))
+sqf_pf <- filter(sqf, pf %in% c("hands","wall","ground","drwep","ptwep","baton","hcuff","pepsp","other"))  
+
+ggplot(sqf_pf, aes(x = pf)) +  ggtitle("Physical force used by officer")+ xlab("Types") + ylab("Percentage") +
+  geom_bar(aes(y = (..count..)/sum(..count..)*100, fill = factor(..x..), stat = "count"))
+
+sqf %>% group_by(year) %>% tally()
+
+```
+
+
+```{r}
+write_csv(sqf, "sqf_all.csv")
+```
+
+
+```{r}
+data <- read_csv('crime_data.csv')
+```
+
+```{r}
+
+cols <- c("recstat", "inout", "trhsloc", "crimsusp", "typeofid", "explnstp", "othpers", "sumissue", "offunif", "frisked", "searched", "contrabn", "adtlrept", "radio", "ac_rept", "ac_inves", "rf_vcrim", "rf_othsw", "ac_proxm", "rf_attir", "cs_objcs", "cs_descr", "cs_casng", "cs_lkout", "rf_vcact", "cs_cloth", "cs_drgtr", "ac_evasv", "ac_assoc", "rf_rfcmp", "cs_vcrim", "cs_bulge", "cs_other", "rf_knowl", "ac_other", "sb_hdobj", "sb_other", "forceuse", "sex", "race", "build", "city", "weapons", "physical_force", "arstmade")
+
+data[cols] <- lapply(data[cols], as.factor)
+
+summary(data)
+
+```
+
+## Prepare data for building lodistic regression models
+
+Getting the data set ready for the models is an important set to obtain optimal parameters and good performance scores.
+
+```{r}
+#install.packages("DescTools")
+library("DescTools")
+data$crimsusp <- as.character(data$crimsusp)
+'%not like any%' <- Negate('%like any%')
+data$crimsusp[data$crimsusp %like any% c("%ROBBERY%", "%ROBBERY", "ROBBERY%")] <- "ROBBERY"
+data$crimsusp[data$crimsusp %like any% c("%BURGLARY%", "%BURGLARY", "BURGLARY%")] <- "ROBBERY"
+data$crimsusp[data$crimsusp %like any% c("%MISD%", "%MISD", "MISD%")] <- "MISD"
+data$crimsusp[data$crimsusp %like any% c("%TERR%", "%TERR", "TERR%")] <- "TERRORISM"
+data$crimsusp[data$crimsusp %like any% c("%FEL%", "%FEL", "FEL%")] <- "FELONY"
+data$crimsusp[data$crimsusp %like any% c("%CRIMINAL MIS%", "%CRIMINAL MIS", "CRIMINAL MIS%")] <- "CRIMINAL MIS"
+data$crimsusp[data$crimsusp %like any% c("%ASSAULT%", "%ASSAULT", "ASSAULT%")] <- "ASSAULT"
+data$crimsusp[data$crimsusp %like any% c("%CRIM POSS%", "%CRIM POSS", "CRIM POSS%")] <- "CRIM POSS"
+data$crimsusp[data$crimsusp %not like any% c("ROBBERY","BURGLARY","MISD","TERRORISM","FELONY","CRIMINAL MIS","ASSAULT","CRIM POSS")] <- "other"
+
+data<-data[(data$crimsusp %like any% c("ROBBERY","BURGLARY","MISD","TERRORISM","FELONY","CRIMINAL MIS","ASSAULT","CRIM POSS","other")),]
+
+data$crimsusp <- as.factor(data$crimsusp)
+levels(data$crimsusp)
+
+data$race <- as.character(data$race)
+data$race[data$race %not like any% c("B", "Q", "W")] <- "Z"
+data$race <- as.factor(data$race)
+levels(data$race)
+
+data$forceuse <- as.character(data$forceuse)
+data$forceuse[data$forceuse != "N" ] <- "Y"
+data$forceuse <- as.factor(data$forceuse)
+levels(data$forceuse)
+
+data$build <- as.character(data$build)
+data$build[data$build %not like any% c("U", "Z")] <- "H"
+data$build <- as.factor(data$build)
+levels(data$build)
+
+data$sex <- as.character(data$sex)
+data<-data[!(data$sex == "Z"),]
+data$sex <- as.factor(data$sex)
+
+data <- data %>% select(-adtlrept)
+data <- data %>% select(-recstat)
+
+df1 <- data %>% select(-c(trhsloc, crimsusp, typeofid, race,build ,city))
+summary(df1)
+df2 <- data %>% select(c(ID, trhsloc, crimsusp, typeofid, race,build ,city))
+summary(df2)
+
+levels(data$crimsusp)
+```
+
+
+```{r}
+library(tidyverse)
+df2$trhsloc <- as.factor(df2$trhsloc)
+
+df2[1]<-lapply(df2[1],function(x)  as.numeric(sub("%", "e-2", x)))
+
+df2<-df2 %>% mutate(trhsloc_Dummy=1) %>% pivot_wider(names_from = trhsloc, values_from = trhsloc_Dummy, names_prefix = "trhsloc_", values_fill = list(trhsloc_Dummy=0))
+
+cols1 <- c("trhsloc_P","trhsloc_H","trhsloc_T")
+
+df2[cols1] <- lapply(df2[cols1], as.factor)
+
+```
+
+
+```{r}
+data <- read_csv('crime_data_new.csv')
+
+cols <- c("recstat", "inout", "trhsloc", "crimsusp", "typeofid", "othpers", "sumissue", "offunif", "frisked", "searched", "contrabn", "radio", "ac_inves", "rf_vcrim", "rf_othsw", "ac_proxm", "rf_attir", "cs_objcs", "cs_descr", "cs_casng", "cs_lkout", "rf_vcact", "cs_cloth", "cs_drgtr", "ac_evasv", "ac_assoc", "rf_rfcmp", "cs_vcrim", "cs_other", "rf_knowl", "sb_hdobj", "sb_other", "forceuse", "race", "city", "weapons", "physical_force", "arstmade","is_black")
+
+data[cols] <- lapply(data[cols], as.factor)
+
+summary(data)
+```
+
+```{r}
+
+data<-data %>% mutate(recstat_Dummy=1) %>% pivot_wider(names_from = recstat, values_from = recstat_Dummy, names_prefix = "recstat_", values_fill = list(recstat_Dummy=0))
+
+data<-data %>% mutate(trhsloc_Dummy=1) %>% pivot_wider(names_from = trhsloc, values_from = trhsloc_Dummy, names_prefix = "trhsloc_", values_fill = list(trhsloc_Dummy=0))
+
+data<-data %>% mutate(crimsusp_Dummy=1) %>% pivot_wider(names_from = crimsusp, values_from = crimsusp_Dummy, names_prefix = "crimsusp_", values_fill = list(crimsusp_Dummy=0))
+
+data<-data %>% mutate(typeofid_Dummy=1) %>% pivot_wider(names_from = typeofid, values_from = typeofid_Dummy, names_prefix = "typeofid_", values_fill = list(typeofid_Dummy=0))
+
+data<-data %>% mutate(forceuse_Dummy=1) %>% pivot_wider(names_from = forceuse, values_from = forceuse_Dummy, names_prefix = "forceuse_", values_fill = list(forceuse_Dummy=0))
+
+data<-data %>% mutate(race_Dummy=1) %>% pivot_wider(names_from = race, values_from = race_Dummy, names_prefix = "race_", values_fill = list(race_Dummy=0))
+
+data<-data %>% mutate(city_Dummy=1) %>% pivot_wider(names_from = city, values_from = city_Dummy, names_prefix = "city_", values_fill = list(city_Dummy=0))
+
+data <- data %>% select(-age)
+
+```
+
+## Train test split - Hard margin
+
+```{r}
+#Train - Test data
+set.seed(123)
+
+nr<-nrow(data)
+trnIndex<- sample(1:nr, size = round(0.7*nr), replace=FALSE)
+dataTrn <- data[trnIndex, ]
+dataTst <- data[-trnIndex, ]
+```
+
+**GLM Model 1** (Vanilla)
+Starting off with cuilding models using logistic regression approach. We need to test the model first and then tune it to fit the data best.
+
+```{r}
+#install.packages("ROCR")
+install.packages("pRoc")
+library(ROCR)
+library(pROC)
+glm_M1 <-glm(arstmade~., data = data, family = 'binomial')
+summary(glm_M1)
+plot(glm_M1)
+
+xDTrn<-dataTrn%>% select(-arstmade)
+xDTst<-dataTst%>% select(-arstmade)
+scores_glm_M1 <- predict(glm_M1, xDTrn, type="response")
+scores_glm_M2 <- predict(glm_M1, xDTst, type="response")
+predictionBinaries <- as.factor(ifelse(scores_glm_M2>0.5,"Y","N"))
+dataTst$arstmade<-as.factor(dataTst$arstmade)
+confusion_dt <- confusionMatrix(predictionBinaries, dataTst$arstmade, positive = "Y")
+
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    N    Y
+#         N 7201  664
+#         Y  267 1137
+                                          
+#           Accuracy : 0.8996          
+#                 95% CI : (0.8933, 0.9056)
+#   No Information Rate : 0.8057          
+#    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+#                  Kappa : 0.6499          
+                                          
+# Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+#            Sensitivity : 0.6313          
+#            Specificity : 0.9642          
+#         Pos Pred Value : 0.8098   # Precision       
+#         Neg Pred Value : 0.9156          
+#             Prevalence : 0.1943          
+#         Detection Rate : 0.1227          
+#   Detection Prevalence : 0.1515          
+#      Balanced Accuracy : 0.7978       
+
+                                          
+#       'Positive' Class : Y
+
+predictionBinaries <- as.factor(ifelse(scores_glm_M2>0.75,"Y","N"))
+dataTst$arstmade<-as.factor(dataTst$arstmade)
+confusion_dt <- confusionMatrix(predictionBinaries, dataTst$arstmade, positive = "Y")
+
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    N    Y
+#         N 7378 1003
+#         Y   90  798
+                                          
+#              Accuracy : 0.8821          
+#                 95% CI : (0.8753, 0.8886)
+#    No Information Rate : 0.8057          
+#    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+#                  Kappa : 0.5337          
+                                          
+# Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+#            Sensitivity : 0.44309         
+#            Specificity : 0.98795         
+#         Pos Pred Value : 0.89865         
+#         Neg Pred Value : 0.88032         
+#             Prevalence : 0.19430         
+#         Detection Rate : 0.08609         
+#   Detection Prevalence : 0.09580         
+#      Balanced Accuracy : 0.71552         
+                                          
+#       'Positive' Class : Y
+
+predictionBinaries <- as.factor(ifelse(scores_glm_M2>0.6,"Y","N"))
+dataTst$arstmade<-as.factor(dataTst$arstmade)
+confusion_dt <- confusionMatrix(predictionBinaries, dataTst$arstmade, positive = "Y")
+confusion_dt
+
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    N    Y
+#         N 7292  796
+#         Y  176 1005
+                                          
+#               Accuracy : 0.8951          
+#                 95% CI : (0.8887, 0.9013)
+#    No Information Rate : 0.8057          
+#    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+#                  Kappa : 0.6148          
+                                          
+# Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+#            Sensitivity : 0.5580          
+#            Specificity : 0.9764          
+#         Pos Pred Value : 0.8510          
+#         Neg Pred Value : 0.9016          
+#             Prevalence : 0.1943          
+#         Detection Rate : 0.1084          
+#   Detection Prevalence : 0.1274          
+#      Balanced Accuracy : 0.7672          
+                                          
+#       'Positive' Class : Y  
+
+pred=prediction(scores_glm_M2, dataTst$arstmade)
+
+#ROC curve
+aucPerf_5 <-performance(pred, "tpr", "fpr")
+plot(aucPerf_5, col='blue', main='ROC curve')
+abline(a=0, b= 1)
+
+#AUC value
+aucPerf=performance(pred, "auc")
+aucPerf@y.values
+# 0.9005398
+
+pr_perf <-performance(pred, "prec", "rec")
+plot(pr_perf, col='blue', main='PR curve')
+
+
+
+library(pROC)
+roc_5 <- roc(dataTrn$arstmade, scores_glm_M1, levels=c("N", "Y"))
+roc_75 <- roc(dataTst$arstmade, scores_glm_M2, levels=c("N", "Y"))
+
+plot.roc(roc_5, col='blue',xlim=c(0.5,0), legacy.axes = TRUE, main='Train - test performance comparison')
+plot.roc(roc_75, col='red',xlim=c(0.5,0), add=TRUE)
+legend("bottomright", legend=c("Training", "Testing"),
+        col=c("blue", "red"), lwd=2, cex=0.8)
+
+pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T)
+plot(pr)
+
+install.packages("PRROC")
+library(PRROC)
+fg <- scores_glm_M2[dataTrn$arstmade == "Y"]
+bg <- scores_glm_M2[dataTrn$arstmade == "N"]
+
+roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T)
+plot(roc)
+
+#PR curve
+pred <- prediction(ROCR.simple$predictions,ROCR.simple$labels)
+perf <- performance(pred,"prec","rec")
+## The plot obtained with the standard ROCR functions
+## Not run: 
+plot(perf)
+
+```
+
+
+**Perform cross-validation GLM (default -> 10 fold)** 
+
+With GLM, we have built 2 models with alpha = 1 (for lasso) and 0 (for ridge) and compared RMSE of the corresponding models to reach the best fit model to predict arrersts made.
+
+**GLM Model 1** : Regularization - Lasso,  we find the optimum lambda from running the model once and build further on that.
+Our findings -
+
+```{r}
+library(glmnet)
+
+glm_cvM1<-cv.glmnet(data.matrix(xDTrn), alpha=1, dataTrn$arstmade, family="binomial", type.measure = "class")
+plot(glm_cvM1)
+glm_cvM1$lambda.min
+# 0.0002826155
+glm_cvM1$lambda.1se
+# 0.0008630668
+
+glm_cvM2<-cv.glmnet(data.matrix(xDTrn), alpha =1, lambda = c(0.0002826155,0.0008630668),  dataTrn$arstmade, family="binomial", type.measure = "class")
+summary(glm_cvM2)
+coef(glm_cvM2, s=glm_cvM2$lambda.1se)
+
+predDefSc<-predict(glm_cvM2, data.matrix(xDTst), s="lambda.1se", type="class")
+confusion_dt <- confusionMatrix(as.factor(predDefSc), as.factor(dataTst$arstmade), positive = "Y")
+confusion_dt
+
+
+
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    N    Y
+#         N 7204  683
+#         Y  264 1118
+                                          
+#            Accuracy : 0.8978          
+#                 95% CI : (0.8915, 0.9039)
+#    No Information Rate : 0.8057          
+#    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+#                  Kappa : 0.6421          
+                                          
+# Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+#            Sensitivity : 0.6208          
+#            Specificity : 0.9646          
+#         Pos Pred Value : 0.8090          
+#         Neg Pred Value : 0.9134          
+#             Prevalence : 0.1943          
+#         Detection Rate : 0.1206          
+#   Detection Prevalence : 0.1491          
+#      Balanced Accuracy : 0.7927          
+                                          
+#       'Positive' Class : Y            
+                                                                         
+
+optimal_lambda <- glm_cvM2$lambda.min
+# 0.0002826155
+
+
+
+```
+
+
+**GLM Model 2** : Regularization - Ridge,  we find the optimum lambda from running the model once and build further on that.
+Our findings -
+```{r}
+library(glmnet)
+
+glm_cvM3<-cv.glmnet(data.matrix(xDTrn), alpha=0, dataTrn$arstmade, family="binomial", type.measure = "class")
+glm_cvM3$lambda.min
+# 0.02292381
+glm_cvM3$lambda.1se
+# 0.03650119
+
+glm_cvM4<-cv.glmnet(data.matrix(xDTrn), alpha =0, lambda = c(0.02292381,0.03650119),  dataTrn$arstmade, family="binomial", type.measure = "class")
+coef(glm_cvM4, s=glm_cvM4$lambda.1se)
+
+
+predDefSc<-predict(glm_cvM4, data.matrix(xDTst), s="lambda.1se", type="class")
+confusion_dt <- confusionMatrix(as.factor(predDefSc), as.factor(dataTst$arstmade), positive = "Y")
+confusion_dt
+
+#Confusion Matrix and Statistics
+
+#          Reference
+#Prediction    N    Y
+#         N 7255  778
+#         Y  213 1023
+                                          
+#           Accuracy : 0.8931          
+#                 95% CI : (0.8866, 0.8993)
+#    No Information Rate : 0.8057          
+#    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+#                  Kappa : 0.6124          
+                                          
+# Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+#            Sensitivity : 0.5680          
+#            Specificity : 0.9715          
+#         Pos Pred Value : 0.8277          
+#         Neg Pred Value : 0.9031          
+#             Prevalence : 0.1943          
+#         Detection Rate : 0.1104          
+#   Detection Prevalence : 0.1333          
+#      Balanced Accuracy : 0.7697          
+                                          
+#       'Positive' Class : Y                                        
+
+optimal_lambda <- glm_cvM4$lambda.min
+# 0.02292381
+
+
+plot(roc.glmnet(glm_cvM2, data.matrix(xDTst), dataTst$arstmade), col='blue', type='l')
+lines(roc.glmnet(glm_cvM4, data.matrix(xDTst), dataTst$arstmade), col='red')
+legend("bottomright", legend=c("Lasso", "Ridge"),
+       col=c("blue", "red"), lty=1:2, cex=0.8)
+
+plot.roc(roc_5, col='blue', legacy.axes = TRUE)
+plot.roc(roc_75, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Testing"),
+        col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+```
+
+
+**Stochiastic Gradient Descent**
+
+```{r}
+# install.packages("sgd")
+library(sgd)
+cols <- names(data)
+data[cols] <- lapply(data[cols], as.numeric)
+nr<-nrow(data)
+trnIndex<- sample(1:nr, size = round(0.7*nr), replace=FALSE)
+dataTrn <- data[trnIndex, ]
+dataTst <- data[-trnIndex, ]
+
+
+sgd.theta <- sgd(arstmade ~ ., data=dataTrn, model="glm")
+sgd.theta
+
+xD<-dataTst%>% select(-arstmade)
+x <- as.matrix(xD)
+y <- dataTst$arstmade
+
+TPredict <- function(theta, x){
+  x <- cbind(rep(1,nrow(x)), x)
+  return(x %*% theta)
+}
+
+ypred <- TPredict(sgd.theta$coefficients, x)
+hist(ypred)
+median(ypred)
+sqrt(mean((y - ypred)^2))
+# 0.3993955
+
+
+```
+
+
+
+```{r}
+write_csv(data, "crime_data.csv")
+```
+
+
+
+
+## Including Plots
