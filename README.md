@@ -47,10 +47,13 @@ An initial descriptive analysis of the data reveals a few key insights about the
 - Distribution of arrest made across races
 ![arstmade (1)](https://user-images.githubusercontent.com/9445072/105079089-8c263900-5a54-11eb-9bba-0d5a2ce5b44a.JPG)
 
+
 - Frisking seen across races
+
 ![frisk](https://user-images.githubusercontent.com/9445072/105079130-9cd6af00-5a54-11eb-974b-0c314b716b89.JPG)
 
 - Arrests across races
+
 ![arstmade](https://user-images.githubusercontent.com/9445072/105079153-a5c78080-5a54-11eb-8449-c82a34695d7a.JPG)
 
 Refer here for code: [Data Exploration & Feature Selection](https://github.com/abhilashhn1993/racial-bias-in-stop-and-frisk-program/blob/main/Code/Feature_Selection_with_statTests.ipynb)
